@@ -38,7 +38,6 @@
         stopSelector: sel.stopButton,
         assistantSelector: sel.assistantTurn,
         timeoutMs: 60000,
-        stableForMs: 2000,
       });
       reply(reqId, { answer: extractAnswerText(turn) });
     } catch (e) {

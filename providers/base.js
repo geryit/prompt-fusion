@@ -94,15 +94,21 @@
     }
   }
 
-  // Resolves when (a) the provider's stop button has disappeared and (b) the
-  // assistant turn DOM has been stable for `stableForMs` (default 2000ms).
-  // This double-check matters because some providers briefly hide the stop
-  // button between markdown render passes.
-  function waitForResponseStable({ stopSelector, assistantSelector, timeoutMs = 60000, stableForMs = 2000 }) {
+  // Resolves once the provider's stop button has been gone continuously for
+  // `postStreamMs` (default 600ms). The stop button is the strongest "stream
+  // finished" signal — it's only rendered while tokens are streaming.
+  //
+  // We do NOT also wait for DOM stability the way an earlier version did:
+  // after the stream ends, providers keep injecting UI chrome (copy button,
+  // citation chips, related searches, model picker re-render) for several
+  // seconds. That kept resetting a `lastChange` timer and caused a 10+ second
+  // wait between visible completion and our resolve. Stop-button gone is
+  // sufficient; the postStreamMs buffer absorbs brief flashes that happen
+  // between markdown render passes.
+  function waitForResponseStable({ stopSelector, assistantSelector, timeoutMs = 60000, postStreamMs = 600 }) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
-      let lastChange = Date.now();
-      let lastHtml = '';
+      let streamEndedAt = null;
 
       const tick = setInterval(() => {
         if (Date.now() - start > timeoutMs) {
@@ -112,18 +118,20 @@
         const stopBtn = document.querySelector(stopSelector);
         const turns = document.querySelectorAll(assistantSelector);
         const lastTurn = turns[turns.length - 1];
-        const currentHtml = lastTurn ? lastTurn.innerHTML : '';
 
-        if (currentHtml !== lastHtml) {
-          lastHtml = currentHtml;
-          lastChange = Date.now();
+        if (!stopBtn && lastTurn) {
+          if (streamEndedAt === null) {
+            streamEndedAt = Date.now();
+          } else if (Date.now() - streamEndedAt >= postStreamMs) {
+            clearInterval(tick);
+            resolve(lastTurn);
+          }
+        } else {
+          // Either still streaming, or the stop button reappeared briefly
+          // between render passes. Reset the timer.
+          streamEndedAt = null;
         }
-        // Done when stop button is gone AND content has been stable.
-        if (!stopBtn && lastTurn && Date.now() - lastChange > stableForMs) {
-          clearInterval(tick);
-          resolve(lastTurn);
-        }
-      }, 250);
+      }, 150);
     });
   }
 
