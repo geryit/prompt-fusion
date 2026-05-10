@@ -52,24 +52,27 @@ async function runFusion({ prompt, synthesizer }, port) {
     url: 'about:blank',
   });
 
-  const tabIds = {};
-  for (const provider of providers) {
-    const url = ProviderUrl[provider] + `#reqId=${reqId}`;
-    const tab = await chrome.tabs.create({ windowId: win.id, url, active: false });
-    tabIds[provider] = tab.id;
-  }
-
+  // Register state BEFORE creating tabs. A fast-loading tab can fire
+  // CONTENT_READY mid-await; the message handler then needs to find this
+  // request via inflight.get(reqId).
   const state = {
     windowId: win.id,
-    tabIds,
+    tabIds: {},
     prompt,
     synthesizer,
     answers: { chatgpt: null, gemini: null, claude: null },
     pending: new Set(providers),
     port,
     overallTimer: null,
+    providerTimers: {}, // per-provider setTimeout handles, cleared on response/finish
   };
   inflight.set(reqId, state);
+
+  for (const provider of providers) {
+    const url = ProviderUrl[provider] + `#reqId=${reqId}`;
+    const tab = await chrome.tabs.create({ windowId: win.id, url, active: false });
+    state.tabIds[provider] = tab.id;
+  }
 
   state.overallTimer = setTimeout(() => finishWith(reqId, 'overall_timeout'), TIMEOUT_OVERALL_MS);
 }
@@ -85,8 +88,10 @@ function onContentReady({ provider, reqId }) {
     prompt: state.prompt,
     reqId,
   });
-  // Per-provider timeout.
-  setTimeout(() => {
+  // Per-provider timeout. Stored on state so onResponseReady/finishWith can
+  // cancel it once the answer arrives — otherwise the callback would still
+  // fire and double-decrement the pending set (harmless but messy).
+  state.providerTimers[provider] = setTimeout(() => {
     if (state.pending.has(provider)) {
       state.answers[provider] = null;
       state.pending.delete(provider);
@@ -100,6 +105,11 @@ function onResponseReady({ provider, reqId, answer, error }) {
   const state = inflight.get(reqId);
   if (!state) return;
   if (!state.pending.has(provider)) return; // already timed out
+  // Cancel the per-provider timeout — answer arrived in time.
+  if (state.providerTimers[provider]) {
+    clearTimeout(state.providerTimers[provider]);
+    state.providerTimers[provider] = null;
+  }
   state.answers[provider] = error ? null : answer;
   if (error) {
     // Stash the error code (e.g. 'cloudflare_challenge') so the popup can show
@@ -126,6 +136,10 @@ async function finishWith(reqId, _reason) {
   const state = inflight.get(reqId);
   if (!state) return;
   clearTimeout(state.overallTimer);
+  // Cancel any still-pending per-provider timeouts.
+  for (const t of Object.values(state.providerTimers || {})) {
+    if (t) clearTimeout(t);
+  }
   inflight.delete(reqId);
 
   // Task 5 short-circuit: no synthesis yet — return the single ChatGPT answer.
