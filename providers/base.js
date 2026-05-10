@@ -54,16 +54,34 @@
       element.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
-    for (const ch of text) {
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
       if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
         element.value += ch;
         element.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch, inputType: 'insertText' }));
+      } else if (ch === '\n') {
+        // Critical: do NOT insert '\n' via insertText into chat-editor
+        // contenteditables (ChatGPT/Lexical, Gemini/rich-textarea). Their
+        // beforeinput handlers treat '\n' as Enter→submit, which sliced the
+        // multi-line synthesis meta-prompt into one-line submissions. <br>
+        // via insertHTML is treated as a soft break (Shift+Enter equivalent).
+        document.execCommand('insertHTML', false, '<br>');
       } else {
         // contenteditable path: use execCommand fallback for the React editors that
         // ChatGPT and Claude use (ProseMirror, Lexical). execCommand is deprecated
         // but still the most reliable cross-editor way to insert text that triggers
         // the framework's onChange handlers.
         document.execCommand('insertText', false, ch);
+        if (i === 0) {
+          // Gemini's rich-textarea (and some other rich editors) swallow the
+          // first synthetic insertText while dismissing their placeholder,
+          // dropping the first letter of the prompt. Verify after a short
+          // settle and retype once if nothing landed.
+          await new Promise(r => setTimeout(r, 30));
+          if (!element.innerText) {
+            document.execCommand('insertText', false, ch);
+          }
+        }
       }
       // 30-100ms randomized delay → ~5-8 chars/sec, reads as human typing.
       await new Promise(r => setTimeout(r, 30 + Math.random() * 70));
