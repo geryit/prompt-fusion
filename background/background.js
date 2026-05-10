@@ -102,6 +102,13 @@ async function runFusion({ prompt, synthesizer }, port) {
   };
   inflight.set(reqId, state);
 
+  // If the user closes the popup mid-fusion, tear down the hidden window and
+  // alarm immediately rather than letting the request linger until the 120s
+  // overall timeout.
+  port.onDisconnect.addListener(() => {
+    if (inflight.has(reqId)) finishWith(reqId, 'popup_closed').catch(() => {});
+  });
+
   for (const provider of providers) {
     const url = ProviderUrl[provider] + `#reqId=${reqId}`;
     const tab = await chrome.tabs.create({ windowId: win.id, url, active: false });
@@ -224,6 +231,8 @@ async function runSynthesis(state, originalReqId) {
   const metaPrompt = buildSynthesisPrompt(state.prompt, state.answers);
 
   return new Promise((resolve, reject) => {
+    let injected = false;
+
     const timer = setTimeout(() => {
       chrome.runtime.onMessage.removeListener(listener);
       reject(new Error('Synthesis timeout'));
@@ -231,6 +240,11 @@ async function runSynthesis(state, originalReqId) {
 
     function listener(msg) {
       if (msg.type === MessageType.CONTENT_READY && msg.reqId === synthReqId && msg.provider === provider) {
+        // Guard against duplicate CONTENT_READY (some provider routes reload
+        // their SPA shell once after the first DOM ready, which would otherwise
+        // re-fire INJECT_PROMPT mid-response).
+        if (injected) return;
+        injected = true;
         chrome.tabs.sendMessage(tab.id, {
           type: MessageType.INJECT_PROMPT,
           provider,

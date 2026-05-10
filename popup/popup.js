@@ -67,16 +67,16 @@ function submit() {
   });
 
   const port = chrome.runtime.connect({ name: 'popup' });
-  port.postMessage({ type: 'FUSION_REQUEST', prompt, synthesizer });
+  port.postMessage({ type: MessageType.FUSION_REQUEST, prompt, synthesizer });
   port.onMessage.addListener((msg) => {
-    if (msg.type === 'STATUS_UPDATE') {
+    if (msg.type === MessageType.STATUS_UPDATE) {
       const chip = document.querySelector(`.chip[data-provider="${msg.provider}"]`);
       if (chip) {
         chip.classList.toggle('ok', msg.status === 'ok');
         chip.classList.toggle('fail', msg.status === 'fail');
         chip.querySelector('.dot').textContent = msg.status === 'ok' ? '✓' : '✗';
       }
-    } else if (msg.type === 'FUSION_DONE') {
+    } else if (msg.type === MessageType.FUSION_DONE) {
       // Capture the raw markdown so the Copy button can paste it as
       // markdown-source rather than the rendered (formatting-stripped) text.
       lastSynthesisMd = msg.synthesis || '';
@@ -89,9 +89,11 @@ function submit() {
       els.rawClaude.innerHTML  = formatRaw(msg.raw.claude,  msg.errors?.claude,  'claude.ai');
       els.result.hidden = false;
       els.submit.disabled = false;
-    } else if (msg.type === 'FUSION_ERROR') {
+    } else if (msg.type === MessageType.FUSION_ERROR) {
       els.error.textContent = msg.error || 'Something went wrong.';
       els.error.hidden = false;
+      // Hide the chips row — leaving ⏳ chips visible alongside an error is misleading.
+      els.status.hidden = true;
       els.submit.disabled = false;
     }
   });
