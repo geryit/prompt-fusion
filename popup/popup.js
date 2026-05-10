@@ -21,6 +21,7 @@ const els = {
 };
 
 let synthesizer = 'chatgpt';
+let lastSynthesisMd = '';
 
 // Restore last-used synthesizer from storage so the user's choice sticks.
 chrome.storage.local.get('synthesizer').then(({ synthesizer: s }) => {
@@ -46,7 +47,7 @@ els.prompt.addEventListener('keydown', (e) => {
 });
 
 els.copy.addEventListener('click', async () => {
-  await navigator.clipboard.writeText(els.synthesis.textContent);
+  await navigator.clipboard.writeText(lastSynthesisMd);
   els.copy.textContent = 'Copied ✓';
   setTimeout(() => (els.copy.textContent = 'Copy synthesis'), 1200);
 });
@@ -76,6 +77,9 @@ function submit() {
         chip.querySelector('.dot').textContent = msg.status === 'ok' ? '✓' : '✗';
       }
     } else if (msg.type === 'FUSION_DONE') {
+      // Capture the raw markdown so the Copy button can paste it as
+      // markdown-source rather than the rendered (formatting-stripped) text.
+      lastSynthesisMd = msg.synthesis || '';
       // marked.parse returns HTML. Provider answers are user-trusted (you ran
       // them from your own logged-in profile) so XSS risk is low, but we still
       // strip <script> and on* attributes via a tiny sanitizer below.
