@@ -124,7 +124,14 @@
         const lastTurn = turns[turns.length - 1];
         if (!lastTurn) return; // assistant turn not in DOM yet
 
-        const currentText = lastTurn.innerText || '';
+        // Claude's extended-thinking phase fills the response container with
+        // just "Thinking" (sometimes repeated). Treat that as not-yet-ready
+        // so we don't resolve while only the thinking indicator is on screen
+        // and capture "Thinking…" as the answer. The actual response always
+        // contains more than this single status word.
+        const rawText = lastTurn.innerText || '';
+        const looksLikeThinkingOnly = /^\s*(Thinking[.…\s]*)+$/i.test(rawText);
+        const currentText = looksLikeThinkingOnly ? '' : rawText;
         if (currentText !== lastText) {
           lastText = currentText;
           textChangedAt = Date.now();
