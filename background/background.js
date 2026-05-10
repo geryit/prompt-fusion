@@ -20,6 +20,15 @@ const inflight = new Map(); // reqId → { windowId, tabIds, prompt, synthesizer
 const TIMEOUT_PER_PROVIDER_MS = 60_000;
 const TIMEOUT_OVERALL_MS = 120_000;
 
+// Heuristic: if the loaded URL no longer matches the provider's host or
+// contains common login-path markers, the user is logged out. We treat
+// that as a clean fail (chip ✗) rather than waiting for the 60s timeout.
+const LOGGED_OUT_MARKERS = {
+  [ProviderId.CHATGPT]: ['/auth/login', 'auth0.openai.com', '/login'],
+  [ProviderId.GEMINI]: ['accounts.google.com', '/ServiceLogin'],
+  [ProviderId.CLAUDE]: ['/login', '/auth/login'],
+};
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'popup') return;
   port.onMessage.addListener((msg) => {
@@ -36,6 +45,29 @@ chrome.runtime.onMessage.addListener((msg) => {
     onContentReady(msg);
   } else if (msg.type === MessageType.RESPONSE_READY) {
     onResponseReady(msg);
+  }
+});
+
+// Watch tabs we created. If they redirect to a login URL, mark that provider
+// failed immediately so the user sees the chip flip ✗ in seconds, not 60s.
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status !== 'complete' || !info.url) return;
+  for (const [reqId, state] of inflight.entries()) {
+    for (const [provider, id] of Object.entries(state.tabIds)) {
+      if (id !== tabId) continue;
+      const markers = LOGGED_OUT_MARKERS[provider] || [];
+      if (markers.some((m) => info.url.includes(m))) {
+        if (state.pending.has(provider)) {
+          state.answers[provider] = null;
+          state.pending.delete(provider);
+          pushStatus(state, provider, 'fail');
+          // Stash a per-provider error code so the popup can show "log in to X".
+          state.errors = state.errors || {};
+          state.errors[provider] = 'logged_out';
+          maybeFinish(reqId);
+        }
+      }
+    }
   }
 });
 
@@ -169,6 +201,7 @@ async function finishWith(reqId, _reason) {
       type: MessageType.FUSION_DONE,
       synthesis,
       raw: state.answers,
+      errors: state.errors || {},
     });
   } catch (_) {}
 

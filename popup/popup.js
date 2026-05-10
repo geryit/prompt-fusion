@@ -80,9 +80,9 @@ function submit() {
       // them from your own logged-in profile) so XSS risk is low, but we still
       // strip <script> and on* attributes via a tiny sanitizer below.
       els.synthesis.innerHTML = renderMarkdown(msg.synthesis);
-      els.rawChatgpt.innerHTML = renderMarkdown(msg.raw.chatgpt || '_(no answer)_');
-      els.rawGemini.innerHTML = renderMarkdown(msg.raw.gemini || '_(no answer)_');
-      els.rawClaude.innerHTML = renderMarkdown(msg.raw.claude || '_(no answer)_');
+      els.rawChatgpt.innerHTML = formatRaw(msg.raw.chatgpt, msg.errors?.chatgpt, 'chatgpt.com');
+      els.rawGemini.innerHTML  = formatRaw(msg.raw.gemini,  msg.errors?.gemini,  'gemini.google.com');
+      els.rawClaude.innerHTML  = formatRaw(msg.raw.claude,  msg.errors?.claude,  'claude.ai');
       els.result.hidden = false;
       els.submit.disabled = false;
     } else if (msg.type === 'FUSION_ERROR') {
@@ -111,4 +111,15 @@ function renderMarkdown(md) {
     });
   });
   return tmp.innerHTML;
+}
+
+function formatRaw(answer, errorCode, host) {
+  if (answer) return renderMarkdown(answer);
+  if (errorCode === 'logged_out') {
+    return `<em>Not logged in. <a href="https://${host}" target="_blank">Open ${host} ↗</a> and sign in, then retry.</em>`;
+  }
+  if (errorCode === 'cloudflare_challenge') {
+    return `<em>Cloudflare challenge — open <a href="https://${host}" target="_blank">${host} ↗</a> and solve it once, then retry.</em>`;
+  }
+  return '<em>(no answer — timed out or failed)</em>';
 }
