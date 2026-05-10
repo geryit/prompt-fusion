@@ -94,20 +94,29 @@
     }
   }
 
-  // Resolves when the assistant response has stopped changing. Uses TWO
+  // Resolves when the assistant response has stopped changing. Uses THREE
   // independent signals — whichever fires first wins:
   //
-  //   1) Stop button has been gone continuously for `postStreamMs` (400ms).
-  //      Strongest signal — stop button is only rendered during streaming.
-  //   2) innerText of the last assistant turn unchanged for `stableTextMs`
-  //      (1500ms). Fallback for when the stop-button selector is stale or
-  //      the provider leaves the button in the DOM long after streaming
-  //      actually ended (observed: ~20s lingering with no visible reason).
+  //   1) stopBased: stop button gone continuously for `postStreamMs` (400ms),
+  //      AND visible text non-empty. Strongest signal — fastest resolve.
+  //   2) textBasedFast: stop button gone AND visible text unchanged for
+  //      `stableTextMs` (1500ms). Slightly slower than (1) but covers cases
+  //      where the stop button blinks back briefly post-stream.
+  //   3) textBasedSafetyNet: visible text unchanged for 5s, regardless of
+  //      stop-button state. Covers the case where the streaming indicator
+  //      never clears at all — observed in both providers in the wild
+  //      (Gemini keeps the stop button mounted while citation/rating UI
+  //      loads; Claude leaves [data-is-streaming] set while follow-up
+  //      suggestions generate). Without (3) the chip would sit at ⏳ until
+  //      the 60s per-provider timeout, even though the answer was on screen
+  //      in seconds. The 5s window is long enough that Claude's mid-
+  //      response tool-use pause (1-3s of trace text shown before the real
+  //      answer streams) won't trigger it prematurely.
   //
   // We compare innerText (visible text) rather than innerHTML so UI chrome
   // that gets injected post-stream (copy buttons, citation chips, related
   // searches) doesn't keep resetting the stability timer.
-  function waitForResponseStable({ stopSelector, assistantSelector, timeoutMs = 60000, postStreamMs = 400, stableTextMs = 1500 }) {
+  function waitForResponseStable({ stopSelector, assistantSelector, timeoutMs = 60000, postStreamMs = 400, stableTextMs = 1500, safetyNetMs = 5000 }) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
       let stopGoneAt = null;
@@ -143,18 +152,20 @@
           stopGoneAt = null;
         }
 
-        // BOTH signals additionally require:
-        //  - non-empty text (don't resolve on a transitional empty assistant
-        //    turn between "thinking" and streamed response — would silently
-        //    drop the real answer from buildSynthesisPrompt's truthy check)
-        //  - the stop-indicator already gone (stopGoneAt !== null) — text can
-        //    look stable for seconds during Claude's "Thinking…" phase, and
-        //    without this guard textBased would fire there too.
+        // All three signals require non-empty text — protects against
+        // resolving on a transitional empty assistant turn (between
+        // "thinking" and streamed response), which would silently drop the
+        // real answer because buildSynthesisPrompt skips falsy entries.
+        // The stopGone gate on (1) and (2) blocks Claude's "Thinking…" phase
+        // from triggering them prematurely; (3) deliberately omits the gate
+        // and instead relies on the longer 5s stability window — see the
+        // function-level comment for the trade-off rationale.
         const hasText = lastText.length > 0;
         const stopGone = stopGoneAt !== null;
         const stopBased = hasText && stopGone && Date.now() - stopGoneAt >= postStreamMs;
-        const textBased = hasText && stopGone && Date.now() - textChangedAt >= stableTextMs;
-        if (stopBased || textBased) {
+        const textBasedFast = hasText && stopGone && Date.now() - textChangedAt >= stableTextMs;
+        const textBasedSafetyNet = hasText && Date.now() - textChangedAt >= safetyNetMs;
+        if (stopBased || textBasedFast || textBasedSafetyNet) {
           clearInterval(tick);
           resolve(lastTurn);
         }
