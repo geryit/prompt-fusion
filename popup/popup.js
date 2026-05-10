@@ -116,10 +116,10 @@ function renderMarkdown(md) {
 function formatRaw(answer, errorCode, host) {
   if (answer) return renderMarkdown(answer);
   if (errorCode === 'logged_out') {
-    return `<em>Not logged in. <a href="https://${host}" target="_blank">Open ${host} ↗</a> and sign in, then retry.</em>`;
+    return `<em>Not logged in. <a href="https://${host}" target="_blank" rel="noopener noreferrer">Open ${host} ↗</a> and sign in, then retry.</em>`;
   }
   if (errorCode === 'cloudflare_challenge') {
-    return `<em>Cloudflare challenge — open <a href="https://${host}" target="_blank">${host} ↗</a> and solve it once, then retry.</em>`;
+    return `<em>Cloudflare challenge — open <a href="https://${host}" target="_blank" rel="noopener noreferrer">${host} ↗</a> and solve it once, then retry.</em>`;
   }
   return '<em>(no answer — timed out or failed)</em>';
 }
