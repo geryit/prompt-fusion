@@ -39,52 +39,58 @@
   // Type characters one-by-one with random 30-100ms delays, dispatching the
   // input events React needs to register state. Works for both <textarea> and
   // contenteditable. We DO NOT use clipboard APIs (cross-origin risk).
+  // Inject prompt text into a textarea/input or contenteditable.
+  //
+  // We used to type character-by-character with random delays for Cloudflare
+  // evasion. But that approach split multi-line prompts (the synthesis meta-
+  // prompt) into one message per line, because chat editors interpret each
+  // '\n' from insertText as Enter→submit. Switching to ATOMIC injection (one
+  // event with the full text) preserves embedded newlines as soft breaks.
+  //
+  // Logged-in browser-profile sessions don't trigger Cloudflare on a normal
+  // paste, so we don't need the typing simulation. If Cloudflare ever flags
+  // this, add a real `navigator.clipboard.writeText` + `Cmd/Ctrl+V` keystroke
+  // approach in a follow-up.
   async function humanType(element, text) {
     element.focus();
+    await new Promise(r => setTimeout(r, 50));
 
-    // Clear any existing content first — providers sometimes pre-fill placeholders
-    // that aren't placeholders but real text nodes.
+    // Editor-native clear: innerText='' bypasses Lexical/ProseMirror's
+    // pipeline and can leave the caret in a broken state. selectAll+delete
+    // routes through the editor's own event handlers.
     if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
       element.value = '';
       element.dispatchEvent(new Event('input', { bubbles: true }));
     } else {
-      // Clear contenteditable AND fire input so framework state (ProseMirror,
-      // Lexical) registers the empty value before we start typing characters.
-      element.innerText = '';
-      element.dispatchEvent(new Event('input', { bubbles: true }));
+      document.execCommand('selectAll', false, null);
+      document.execCommand('delete', false, null);
+    }
+    await new Promise(r => setTimeout(r, 50));
+
+    if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+      element.value = text;
+      element.dispatchEvent(new InputEvent('input', {
+        bubbles: true, data: text, inputType: 'insertFromPaste',
+      }));
+      return;
     }
 
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
-        element.value += ch;
-        element.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch, inputType: 'insertText' }));
-      } else if (ch === '\n') {
-        // Critical: do NOT insert '\n' via insertText into chat-editor
-        // contenteditables (ChatGPT/Lexical, Gemini/rich-textarea). Their
-        // beforeinput handlers treat '\n' as Enter→submit, which sliced the
-        // multi-line synthesis meta-prompt into one-line submissions. <br>
-        // via insertHTML is treated as a soft break (Shift+Enter equivalent).
-        document.execCommand('insertHTML', false, '<br>');
-      } else {
-        // contenteditable path: use execCommand fallback for the React editors that
-        // ChatGPT and Claude use (ProseMirror, Lexical). execCommand is deprecated
-        // but still the most reliable cross-editor way to insert text that triggers
-        // the framework's onChange handlers.
-        document.execCommand('insertText', false, ch);
-        if (i === 0) {
-          // Gemini's rich-textarea (and some other rich editors) swallow the
-          // first synthetic insertText while dismissing their placeholder,
-          // dropping the first letter of the prompt. Verify after a short
-          // settle and retype once if nothing landed.
-          await new Promise(r => setTimeout(r, 30));
-          if (!element.innerText) {
-            document.execCommand('insertText', false, ch);
-          }
-        }
-      }
-      // 30-100ms randomized delay → ~5-8 chars/sec, reads as human typing.
-      await new Promise(r => setTimeout(r, 30 + Math.random() * 70));
+    // For contenteditable: dispatch a synthetic paste event with the full
+    // text in clipboardData. Lexical, ProseMirror, and rich-textarea all
+    // have explicit paste handlers that preserve multi-line text correctly.
+    const dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    element.dispatchEvent(new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true,
+    }));
+    await new Promise(r => setTimeout(r, 200));
+
+    // Verify the paste landed; some editors ignore synthetic ClipboardEvents.
+    // Fall back to atomic insertText which fires a single beforeinput — still
+    // multi-line-safe because there's only one event total.
+    if (!element.innerText || element.innerText.length < Math.min(text.length / 2, 20)) {
+      document.execCommand('insertText', false, text);
+      await new Promise(r => setTimeout(r, 150));
     }
   }
 
