@@ -23,6 +23,9 @@ const els = {
 let synthesizer = 'chatgpt';
 let lastSynthesisMd = '';
 
+// Focus the prompt textarea on open so the user can start typing immediately.
+els.prompt.focus();
+
 // Restore last-used synthesizer from storage so the user's choice sticks.
 chrome.storage.local.get('synthesizer').then(({ synthesizer: s }) => {
   if (s) selectSynthesizer(s);
