@@ -76,10 +76,13 @@ function submit() {
         chip.querySelector('.dot').textContent = msg.status === 'ok' ? '✓' : '✗';
       }
     } else if (msg.type === 'FUSION_DONE') {
-      els.synthesis.textContent = msg.synthesis;
-      els.rawChatgpt.textContent = msg.raw.chatgpt || '(no answer)';
-      els.rawGemini.textContent = msg.raw.gemini || '(no answer)';
-      els.rawClaude.textContent = msg.raw.claude || '(no answer)';
+      // marked.parse returns HTML. Provider answers are user-trusted (you ran
+      // them from your own logged-in profile) so XSS risk is low, but we still
+      // strip <script> and on* attributes via a tiny sanitizer below.
+      els.synthesis.innerHTML = renderMarkdown(msg.synthesis);
+      els.rawChatgpt.innerHTML = renderMarkdown(msg.raw.chatgpt || '_(no answer)_');
+      els.rawGemini.innerHTML = renderMarkdown(msg.raw.gemini || '_(no answer)_');
+      els.rawClaude.innerHTML = renderMarkdown(msg.raw.claude || '_(no answer)_');
       els.result.hidden = false;
       els.submit.disabled = false;
     } else if (msg.type === 'FUSION_ERROR') {
@@ -91,4 +94,21 @@ function submit() {
   port.onDisconnect.addListener(() => {
     els.submit.disabled = false;
   });
+}
+
+// Minimal sanitizer: drop <script> tags and on* event-handler attributes.
+// Sufficient given the trust boundary (your own logged-in providers' output).
+// If you ever expose this to untrusted input, swap in DOMPurify.
+function renderMarkdown(md) {
+  if (!md) return '';
+  const html = marked.parse(md, { mangle: false, headerIds: false });
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  tmp.querySelectorAll('script').forEach((n) => n.remove());
+  tmp.querySelectorAll('*').forEach((n) => {
+    [...n.attributes].forEach((a) => {
+      if (a.name.startsWith('on')) n.removeAttribute(a.name);
+    });
+  });
+  return tmp.innerHTML;
 }

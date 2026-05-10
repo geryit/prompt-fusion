@@ -59,3 +59,18 @@ details summary { cursor: pointer; color: var(--muted); user-select: none; }
 .raw { white-space: pre-wrap; word-wrap: break-word; padding-top: 6px; }
 
 .error { background: #3a1a1a; border: 1px solid var(--fail); color: #ffd4d4; padding: 8px 10px; border-radius: 8px; }
+
+/* Minimal markdown styling for synthesized + raw answers. */
+.synthesis :is(p, ul, ol, pre, blockquote), .raw :is(p, ul, ol, pre, blockquote) {
+  margin: 0.4em 0;
+}
+.synthesis pre, .raw pre {
+  background: #0a0c11; padding: 8px 10px; border-radius: 6px; overflow-x: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+}
+.synthesis code, .raw code {
+  background: #0a0c11; padding: 1px 4px; border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+}
+.synthesis pre code, .raw pre code { background: transparent; padding: 0; }
+.synthesis a, .raw a { color: #9d8aff; }
