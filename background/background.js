@@ -142,11 +142,28 @@ async function finishWith(reqId, _reason) {
   for (const t of Object.values(state.providerTimers || {})) {
     if (t) clearTimeout(t);
   }
-  inflight.delete(reqId);
 
-  // Task 5 short-circuit: no synthesis yet — return the single ChatGPT answer.
-  // Task 10 replaces this block with a real synthesis tab.
-  const synthesis = state.answers.chatgpt || '(no answer)';
+  // If at least one provider returned, run synthesis. If all failed, error out.
+  const haveAny = Object.values(state.answers).some(Boolean);
+  let synthesis;
+  if (!haveAny) {
+    try { state.port.postMessage({ type: MessageType.FUSION_ERROR, error: 'All providers failed.' }); } catch (_) {}
+    inflight.delete(reqId);
+    await chrome.windows.remove(state.windowId).catch(() => {});
+    if (inflight.size === 0) stopKeepAlive();
+    return;
+  }
+  try {
+    synthesis = await runSynthesis(state, reqId);
+  } catch (e) {
+    // Synthesis failed → fall back to the first non-null raw answer.
+    synthesis = state.answers[state.synthesizer]
+              ?? state.answers.chatgpt
+              ?? state.answers.gemini
+              ?? state.answers.claude
+              ?? '(synthesis failed and no raw answer available)';
+  }
+
   try {
     state.port.postMessage({
       type: MessageType.FUSION_DONE,
@@ -155,8 +172,47 @@ async function finishWith(reqId, _reason) {
     });
   } catch (_) {}
 
+  inflight.delete(reqId);
   await chrome.windows.remove(state.windowId).catch(() => {});
   if (inflight.size === 0) stopKeepAlive();
+}
+
+// Opens a 4th tab in the user-selected synthesizer provider, sends the meta-
+// prompt via a one-off promise that resolves on the next RESPONSE_READY for
+// this synthesis tab. This is a separate flow from runFusion's collector
+// because we need a dedicated reqId scope so onResponseReady doesn't confuse
+// the synthesis answer with a delayed retry from the original tabs.
+async function runSynthesis(state, originalReqId) {
+  const synthReqId = `${originalReqId}-synth`;
+  const provider = state.synthesizer;
+  const url = ProviderUrl[provider] + `#reqId=${synthReqId}`;
+  const tab = await chrome.tabs.create({ windowId: state.windowId, url, active: false });
+
+  const metaPrompt = buildSynthesisPrompt(state.prompt, state.answers);
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.runtime.onMessage.removeListener(listener);
+      reject(new Error('Synthesis timeout'));
+    }, 90_000); // synthesis can be longer than a single answer
+
+    function listener(msg) {
+      if (msg.type === MessageType.CONTENT_READY && msg.reqId === synthReqId && msg.provider === provider) {
+        chrome.tabs.sendMessage(tab.id, {
+          type: MessageType.INJECT_PROMPT,
+          provider,
+          prompt: metaPrompt,
+          reqId: synthReqId,
+        });
+      } else if (msg.type === MessageType.RESPONSE_READY && msg.reqId === synthReqId) {
+        clearTimeout(timer);
+        chrome.runtime.onMessage.removeListener(listener);
+        if (msg.error) reject(new Error(msg.error));
+        else resolve(msg.answer);
+      }
+    }
+    chrome.runtime.onMessage.addListener(listener);
+  });
 }
 
 // chrome.alarms keep-alive: prevents the service worker from being evicted
