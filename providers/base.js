@@ -136,14 +136,17 @@
           stopGoneAt = null;
         }
 
-        // BOTH signals additionally require non-empty text — otherwise we'd
-        // resolve on a transitional empty assistant turn (e.g. between the
-        // "thinking" indicator and the streamed response), returning '' as
-        // the answer and getting silently dropped by buildSynthesisPrompt's
-        // truthiness check.
+        // BOTH signals additionally require:
+        //  - non-empty text (don't resolve on a transitional empty assistant
+        //    turn between "thinking" and streamed response — would silently
+        //    drop the real answer from buildSynthesisPrompt's truthy check)
+        //  - the stop-indicator already gone (stopGoneAt !== null) — text can
+        //    look stable for seconds during Claude's "Thinking…" phase, and
+        //    without this guard textBased would fire there too.
         const hasText = lastText.length > 0;
-        const stopBased = hasText && stopGoneAt !== null && Date.now() - stopGoneAt >= postStreamMs;
-        const textBased = hasText && Date.now() - textChangedAt >= stableTextMs;
+        const stopGone = stopGoneAt !== null;
+        const stopBased = hasText && stopGone && Date.now() - stopGoneAt >= postStreamMs;
+        const textBased = hasText && stopGone && Date.now() - textChangedAt >= stableTextMs;
         if (stopBased || textBased) {
           clearInterval(tick);
           resolve(lastTurn);
