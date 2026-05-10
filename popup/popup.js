@@ -44,12 +44,44 @@ chrome.storage.local.get('lastResult').then(({ lastResult }) => {
   if (Date.now() - (lastResult.timestamp || 0) > RESULT_TTL_MS) return;
   if (lastResult.prompt) els.prompt.value = lastResult.prompt;
   if (lastResult.type === MessageType.FUSION_DONE) {
-    renderResult(lastResult);
+    if (!lastResult.synthesisInTab) renderResult(lastResult);
   } else if (lastResult.type === MessageType.FUSION_ERROR) {
     els.error.textContent = lastResult.error || 'Something went wrong.';
     els.error.hidden = false;
   }
+  // Reflect per-provider outcome in the chips so the user can see WHICH
+  // provider failed and why. Without this the popup just shows the umbrella
+  // error and the chips stay at ⏳, hiding which step actually broke.
+  applyChipStates(lastResult);
 });
+
+function applyChipStates(state) {
+  const attempted = state.attempted || [];
+  const answers = state.answers || {};
+  const errors = state.errors || {};
+  if (attempted.length === 0) return;
+  els.status.hidden = false;
+  document.querySelectorAll('.chip').forEach((c) => {
+    const provider = c.dataset.provider;
+    const dot = c.querySelector('.dot');
+    if (!attempted.includes(provider)) {
+      c.hidden = true; // synthesizer, not asked
+      return;
+    }
+    c.hidden = false;
+    c.classList.remove('ok', 'fail');
+    if (answers[provider]) {
+      c.classList.add('ok');
+      dot.textContent = '✓';
+      c.removeAttribute('title');
+    } else {
+      c.classList.add('fail');
+      dot.textContent = '✗';
+      const reason = errors[provider];
+      c.title = reason ? `Failed: ${reason}` : 'Failed (timeout or empty response)';
+    }
+  });
+}
 
 function renderResult(msg) {
   lastSynthesisMd = msg.synthesis || '';

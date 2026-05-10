@@ -197,7 +197,16 @@ async function finishWith(reqId, _reason) {
 
   if (!haveAny) {
     const errPayload = { type: MessageType.FUSION_ERROR, error: 'All providers failed.' };
-    chrome.storage.local.set({ lastResult: { ...errPayload, prompt: state.prompt, timestamp: Date.now() } });
+    chrome.storage.local.set({
+      lastResult: {
+        ...errPayload,
+        prompt: state.prompt,
+        attempted: Object.keys(state.tabIds),
+        answers: state.answers,
+        errors: state.errors || {},
+        timestamp: Date.now(),
+      },
+    });
     try { state.port.postMessage(errPayload); } catch (_) {}
     inflight.delete(reqId);
     await chrome.windows.remove(state.windowId).catch(() => {});
@@ -267,6 +276,21 @@ async function openSynthesisTab(state) {
   try {
     state.port.postMessage({ type: MessageType.FUSION_DONE, synthesisInTab: true });
   } catch (_) {}
+
+  // Persist a summary of this run so re-opening the popup shows which initial
+  // providers succeeded/failed (chip states). The synthesis itself lives in
+  // the tab, not in storage, but the chip outcome is still useful context.
+  chrome.storage.local.set({
+    lastResult: {
+      type: MessageType.FUSION_DONE,
+      synthesisInTab: true,
+      prompt: state.prompt,
+      attempted: Object.keys(state.tabIds),
+      answers: state.answers,
+      errors: state.errors || {},
+      timestamp: Date.now(),
+    },
+  });
 }
 
 // chrome.alarms keep-alive: prevents the service worker from being evicted
