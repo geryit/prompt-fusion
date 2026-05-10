@@ -75,10 +75,12 @@ async function runFusion({ prompt, synthesizer }, port) {
   const reqId = crypto.randomUUID();
   startKeepAlive();
 
-  // All three providers fire in parallel. Each has its own per-tab content
-  // script that announces CONTENT_READY when it loads, at which point we
-  // dispatch INJECT_PROMPT to that tab specifically.
-  const providers = [ProviderId.CHATGPT, ProviderId.GEMINI, ProviderId.CLAUDE];
+  // Ask only the providers OTHER than the chosen synthesizer in the initial
+  // round. The synthesizer's own answer comes from generating the response
+  // to the meta-prompt in the final tab — running it twice (once initially,
+  // once for synthesis) would waste a tab and an extra failure point.
+  const providers = [ProviderId.CHATGPT, ProviderId.GEMINI, ProviderId.CLAUDE]
+    .filter((p) => p !== synthesizer);
 
   // Record the user's main browsing window so the synthesis tab can be opened
   // there visibly at the end. `windowTypes: ['normal']` filters out the

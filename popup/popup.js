@@ -27,8 +27,10 @@ let lastSynthesisMd = '';
 els.prompt.focus();
 
 // Restore last-used synthesizer from storage so the user's choice sticks.
+// Always call selectSynthesizer (with 'chatgpt' default) so the chip-hiding
+// side effect runs on first load too.
 chrome.storage.local.get('synthesizer').then(({ synthesizer: s }) => {
-  if (s) selectSynthesizer(s);
+  selectSynthesizer(s || 'chatgpt');
 });
 
 // Chrome popups auto-close the moment focus shifts (which happens when
@@ -68,6 +70,11 @@ function selectSynthesizer(value) {
     b.setAttribute('aria-checked', String(active));
   });
   chrome.storage.local.set({ synthesizer: value });
+  // The synthesizer isn't asked in the initial round (its answer comes from
+  // the final tab), so hide its chip — leaving it at ⏳ would mislead.
+  document.querySelectorAll('.chip').forEach((c) => {
+    c.hidden = c.dataset.provider === value;
+  });
 }
 
 els.submit.addEventListener('click', submit);
