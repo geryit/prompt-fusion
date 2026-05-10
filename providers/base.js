@@ -48,7 +48,10 @@
       element.value = '';
       element.dispatchEvent(new Event('input', { bubbles: true }));
     } else {
+      // Clear contenteditable AND fire input so framework state (ProseMirror,
+      // Lexical) registers the empty value before we start typing characters.
       element.innerText = '';
+      element.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
     for (const ch of text) {
