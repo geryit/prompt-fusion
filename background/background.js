@@ -43,8 +43,10 @@ async function runFusion({ prompt, synthesizer }, port) {
   const reqId = crypto.randomUUID();
   startKeepAlive();
 
-  // For Task 5 we only spawn ChatGPT. Tasks 7–9 add Gemini and Claude.
-  const providers = [ProviderId.CHATGPT];
+  // All three providers fire in parallel. Each has its own per-tab content
+  // script that announces CONTENT_READY when it loads, at which point we
+  // dispatch INJECT_PROMPT to that tab specifically.
+  const providers = [ProviderId.CHATGPT, ProviderId.GEMINI, ProviderId.CLAUDE];
 
   const win = await chrome.windows.create({
     state: 'minimized',
