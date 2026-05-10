@@ -94,21 +94,25 @@
     }
   }
 
-  // Resolves once the provider's stop button has been gone continuously for
-  // `postStreamMs` (default 600ms). The stop button is the strongest "stream
-  // finished" signal — it's only rendered while tokens are streaming.
+  // Resolves when the assistant response has stopped changing. Uses TWO
+  // independent signals — whichever fires first wins:
   //
-  // We do NOT also wait for DOM stability the way an earlier version did:
-  // after the stream ends, providers keep injecting UI chrome (copy button,
-  // citation chips, related searches, model picker re-render) for several
-  // seconds. That kept resetting a `lastChange` timer and caused a 10+ second
-  // wait between visible completion and our resolve. Stop-button gone is
-  // sufficient; the postStreamMs buffer absorbs brief flashes that happen
-  // between markdown render passes.
-  function waitForResponseStable({ stopSelector, assistantSelector, timeoutMs = 60000, postStreamMs = 600 }) {
+  //   1) Stop button has been gone continuously for `postStreamMs` (400ms).
+  //      Strongest signal — stop button is only rendered during streaming.
+  //   2) innerText of the last assistant turn unchanged for `stableTextMs`
+  //      (1500ms). Fallback for when the stop-button selector is stale or
+  //      the provider leaves the button in the DOM long after streaming
+  //      actually ended (observed: ~20s lingering with no visible reason).
+  //
+  // We compare innerText (visible text) rather than innerHTML so UI chrome
+  // that gets injected post-stream (copy buttons, citation chips, related
+  // searches) doesn't keep resetting the stability timer.
+  function waitForResponseStable({ stopSelector, assistantSelector, timeoutMs = 60000, postStreamMs = 400, stableTextMs = 1500 }) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
-      let streamEndedAt = null;
+      let stopGoneAt = null;
+      let lastText = '';
+      let textChangedAt = Date.now();
 
       const tick = setInterval(() => {
         if (Date.now() - start > timeoutMs) {
@@ -118,18 +122,25 @@
         const stopBtn = document.querySelector(stopSelector);
         const turns = document.querySelectorAll(assistantSelector);
         const lastTurn = turns[turns.length - 1];
+        if (!lastTurn) return; // assistant turn not in DOM yet
 
-        if (!stopBtn && lastTurn) {
-          if (streamEndedAt === null) {
-            streamEndedAt = Date.now();
-          } else if (Date.now() - streamEndedAt >= postStreamMs) {
-            clearInterval(tick);
-            resolve(lastTurn);
-          }
+        const currentText = lastTurn.innerText || '';
+        if (currentText !== lastText) {
+          lastText = currentText;
+          textChangedAt = Date.now();
+        }
+
+        if (!stopBtn) {
+          if (stopGoneAt === null) stopGoneAt = Date.now();
         } else {
-          // Either still streaming, or the stop button reappeared briefly
-          // between render passes. Reset the timer.
-          streamEndedAt = null;
+          stopGoneAt = null;
+        }
+
+        const stopBased = stopGoneAt !== null && Date.now() - stopGoneAt >= postStreamMs;
+        const textBased = lastText.length > 0 && Date.now() - textChangedAt >= stableTextMs;
+        if (stopBased || textBased) {
+          clearInterval(tick);
+          resolve(lastTurn);
         }
       }, 150);
     });
