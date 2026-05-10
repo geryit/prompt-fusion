@@ -102,12 +102,13 @@ async function runFusion({ prompt, synthesizer }, port) {
   };
   inflight.set(reqId, state);
 
-  // If the user closes the popup mid-fusion, tear down the hidden window and
-  // alarm immediately rather than letting the request linger until the 120s
-  // overall timeout.
-  port.onDisconnect.addListener(() => {
-    if (inflight.has(reqId)) finishWith(reqId, 'popup_closed').catch(() => {});
-  });
+  // NOTE: we deliberately do NOT teardown on port.onDisconnect. Chrome popups
+  // auto-close the instant focus shifts — and chrome.windows.create steals
+  // focus on macOS even with focused:false. Treating that as "user cancelled"
+  // would kill every fusion within ~3s. Orphans are caught by the 120s
+  // overall timeout instead. The downside: a fusion the user explicitly
+  // cancels still runs to completion in the background, but the user can
+  // just close the minimized window manually.
 
   for (const provider of providers) {
     const url = ProviderUrl[provider] + `#reqId=${reqId}`;
@@ -186,7 +187,9 @@ async function finishWith(reqId, _reason) {
   const haveAny = Object.values(state.answers).some(Boolean);
   let synthesis;
   if (!haveAny) {
-    try { state.port.postMessage({ type: MessageType.FUSION_ERROR, error: 'All providers failed.' }); } catch (_) {}
+    const errPayload = { type: MessageType.FUSION_ERROR, error: 'All providers failed.' };
+    chrome.storage.local.set({ lastResult: { ...errPayload, prompt: state.prompt, timestamp: Date.now() } });
+    try { state.port.postMessage(errPayload); } catch (_) {}
     inflight.delete(reqId);
     await chrome.windows.remove(state.windowId).catch(() => {});
     if (inflight.size === 0) stopKeepAlive();
@@ -203,14 +206,18 @@ async function finishWith(reqId, _reason) {
               ?? '(synthesis failed and no raw answer available)';
   }
 
-  try {
-    state.port.postMessage({
-      type: MessageType.FUSION_DONE,
-      synthesis,
-      raw: state.answers,
-      errors: state.errors || {},
-    });
-  } catch (_) {}
+  const payload = {
+    type: MessageType.FUSION_DONE,
+    synthesis,
+    raw: state.answers,
+    errors: state.errors || {},
+  };
+
+  // Persist the result so a popup that was auto-closed when the hidden
+  // window stole focus can still display it on next open.
+  chrome.storage.local.set({ lastResult: { ...payload, prompt: state.prompt, timestamp: Date.now() } });
+
+  try { state.port.postMessage(payload); } catch (_) {}
 
   inflight.delete(reqId);
   await chrome.windows.remove(state.windowId).catch(() => {});

@@ -28,6 +28,33 @@ chrome.storage.local.get('synthesizer').then(({ synthesizer: s }) => {
   if (s) selectSynthesizer(s);
 });
 
+// Chrome popups auto-close the moment focus shifts (which happens when
+// background opens the hidden window). The fusion still runs to completion
+// in the background, but the FUSION_DONE message arrives at a dead port.
+// We persist the result in chrome.storage.local on completion, and rehydrate
+// it here so re-opening the popup shows the most recent fusion's output.
+const RESULT_TTL_MS = 10 * 60 * 1000; // 10 minutes
+chrome.storage.local.get('lastResult').then(({ lastResult }) => {
+  if (!lastResult) return;
+  if (Date.now() - (lastResult.timestamp || 0) > RESULT_TTL_MS) return;
+  if (lastResult.prompt) els.prompt.value = lastResult.prompt;
+  if (lastResult.type === MessageType.FUSION_DONE) {
+    renderResult(lastResult);
+  } else if (lastResult.type === MessageType.FUSION_ERROR) {
+    els.error.textContent = lastResult.error || 'Something went wrong.';
+    els.error.hidden = false;
+  }
+});
+
+function renderResult(msg) {
+  lastSynthesisMd = msg.synthesis || '';
+  els.synthesis.innerHTML = renderMarkdown(msg.synthesis);
+  els.rawChatgpt.innerHTML = formatRaw(msg.raw?.chatgpt, msg.errors?.chatgpt, 'chatgpt.com');
+  els.rawGemini.innerHTML  = formatRaw(msg.raw?.gemini,  msg.errors?.gemini,  'gemini.google.com');
+  els.rawClaude.innerHTML  = formatRaw(msg.raw?.claude,  msg.errors?.claude,  'claude.ai');
+  els.result.hidden = false;
+}
+
 els.segs.forEach((b) => b.addEventListener('click', () => selectSynthesizer(b.dataset.value)));
 
 function selectSynthesizer(value) {
@@ -56,6 +83,10 @@ function submit() {
   const prompt = els.prompt.value.trim();
   if (!prompt) return;
 
+  // Wipe any stale lastResult so re-opening the popup mid-fusion doesn't
+  // show the previous run's output as if it were the new one.
+  chrome.storage.local.remove('lastResult');
+
   els.submit.disabled = true;
   els.error.hidden = true;
   els.result.hidden = true;
@@ -77,17 +108,7 @@ function submit() {
         chip.querySelector('.dot').textContent = msg.status === 'ok' ? '✓' : '✗';
       }
     } else if (msg.type === MessageType.FUSION_DONE) {
-      // Capture the raw markdown so the Copy button can paste it as
-      // markdown-source rather than the rendered (formatting-stripped) text.
-      lastSynthesisMd = msg.synthesis || '';
-      // marked.parse returns HTML. Provider answers are user-trusted (you ran
-      // them from your own logged-in profile) so XSS risk is low, but we still
-      // strip <script> and on* attributes via a tiny sanitizer below.
-      els.synthesis.innerHTML = renderMarkdown(msg.synthesis);
-      els.rawChatgpt.innerHTML = formatRaw(msg.raw.chatgpt, msg.errors?.chatgpt, 'chatgpt.com');
-      els.rawGemini.innerHTML  = formatRaw(msg.raw.gemini,  msg.errors?.gemini,  'gemini.google.com');
-      els.rawClaude.innerHTML  = formatRaw(msg.raw.claude,  msg.errors?.claude,  'claude.ai');
-      els.result.hidden = false;
+      renderResult(msg);
       els.submit.disabled = false;
     } else if (msg.type === MessageType.FUSION_ERROR) {
       els.error.textContent = msg.error || 'Something went wrong.';
