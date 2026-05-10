@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <textarea id="prompt" placeholder="Ask anything…" rows="3"></textarea>
+
+    <div class="row">
+      <label>Synthesize with:</label>
+      <div id="synth-selector" class="segmented" role="radiogroup">
+        <button data-value="chatgpt" class="seg active" role="radio" aria-checked="true">ChatGPT</button>
+        <button data-value="gemini" class="seg" role="radio" aria-checked="false">Gemini</button>
+        <button data-value="claude" class="seg" role="radio" aria-checked="false">Claude</button>
+      </div>
+    </div>
+
+    <button id="submit">Fuse →</button>
+
+    <!-- Loading + chips area, hidden until a request runs -->
+    <div id="status" hidden>
+      <span class="chip" data-provider="chatgpt">ChatGPT <span class="dot">⏳</span></span>
+      <span class="chip" data-provider="gemini">Gemini <span class="dot">⏳</span></span>
+      <span class="chip" data-provider="claude">Claude <span class="dot">⏳</span></span>
+    </div>
+
+    <!-- Result area -->
+    <section id="result" hidden>
+      <div id="synthesis" class="synthesis"></div>
+      <div class="actions">
+        <button id="copy">Copy synthesis</button>
+      </div>
+      <details><summary>ChatGPT answer</summary><div id="raw-chatgpt" class="raw"></div></details>
+      <details><summary>Gemini answer</summary><div id="raw-gemini" class="raw"></div></details>
+      <details><summary>Claude answer</summary><div id="raw-claude" class="raw"></div></details>
+    </section>
+
+    <div id="error" class="error" hidden></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

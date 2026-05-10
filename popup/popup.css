@@ -1,0 +1,61 @@
+:root {
+  --accent: #6c47ff;
+  --bg: #0f1115;
+  --fg: #e6e6e9;
+  --muted: #8a8a93;
+  --border: #2a2d36;
+  --ok: #4caf50;
+  --fail: #ef5350;
+}
+
+html, body { margin: 0; padding: 0; }
+body { width: 420px; background: var(--bg); color: var(--fg); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+
+#app { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 60px;
+  background: #181b22; color: var(--fg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font: inherit;
+}
+textarea:focus { border-color: var(--accent); outline: none; }
+
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+label { color: var(--muted); }
+
+.segmented { display: inline-flex; background: #181b22; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg { background: transparent; color: var(--fg); border: 0; padding: 6px 10px; cursor: pointer; font: inherit; }
+.seg.active { background: var(--accent); color: white; }
+
+#submit {
+  background: var(--accent); color: white; border: 0; border-radius: 8px;
+  padding: 10px; font: inherit; font-weight: 600; cursor: pointer;
+}
+#submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+#status { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  background: #181b22; border: 1px solid var(--border); border-radius: 999px;
+  padding: 4px 10px; font-size: 12px; color: var(--muted);
+}
+.chip .dot { margin-left: 4px; }
+.chip.ok .dot { color: var(--ok); }
+.chip.fail .dot { color: var(--fail); }
+
+.synthesis {
+  background: #181b22; border: 1px solid var(--accent); border-radius: 10px;
+  padding: 10px 12px; white-space: pre-wrap; word-wrap: break-word;
+}
+
+.actions { display: flex; justify-content: flex-end; }
+#copy {
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 8px; font: inherit; cursor: pointer;
+}
+#copy:hover { color: var(--fg); border-color: var(--fg); }
+
+details { background: #131620; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+details summary { cursor: pointer; color: var(--muted); user-select: none; }
+.raw { white-space: pre-wrap; word-wrap: break-word; padding-top: 6px; }
+
+.error { background: #3a1a1a; border: 1px solid var(--fail); color: #ffd4d4; padding: 8px 10px; border-radius: 8px; }
