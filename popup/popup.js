@@ -108,7 +108,14 @@ function submit() {
         chip.querySelector('.dot').textContent = msg.status === 'ok' ? '✓' : '✗';
       }
     } else if (msg.type === MessageType.FUSION_DONE) {
-      renderResult(msg);
+      if (msg.synthesisInTab) {
+        // Background opened the synthesis directly in a provider tab — popup
+        // shouldn't render a result here.
+        els.synthesis.innerHTML = '<em>Synthesis opened in a new tab ↗</em>';
+        els.result.hidden = false;
+      } else {
+        renderResult(msg);
+      }
       els.submit.disabled = false;
     } else if (msg.type === MessageType.FUSION_ERROR) {
       els.error.textContent = msg.error || 'Something went wrong.';

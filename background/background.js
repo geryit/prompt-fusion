@@ -80,6 +80,13 @@ async function runFusion({ prompt, synthesizer }, port) {
   // dispatch INJECT_PROMPT to that tab specifically.
   const providers = [ProviderId.CHATGPT, ProviderId.GEMINI, ProviderId.CLAUDE];
 
+  // Record the user's main browsing window so the synthesis tab can be opened
+  // there visibly at the end. `windowTypes: ['normal']` filters out the
+  // toolbar popup's own window, returning the actual Chrome browser window
+  // the user is using.
+  const userWin = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null);
+  const userWindowId = userWin ? userWin.id : null;
+
   const win = await chrome.windows.create({
     state: 'minimized',
     focused: false,
@@ -91,6 +98,7 @@ async function runFusion({ prompt, synthesizer }, port) {
   // request via inflight.get(reqId).
   const state = {
     windowId: win.id,
+    userWindowId,
     tabIds: {},
     prompt,
     synthesizer,
@@ -183,9 +191,8 @@ async function finishWith(reqId, _reason) {
     if (t) clearTimeout(t);
   }
 
-  // If at least one provider returned, run synthesis. If all failed, error out.
   const haveAny = Object.values(state.answers).some(Boolean);
-  let synthesis;
+
   if (!haveAny) {
     const errPayload = { type: MessageType.FUSION_ERROR, error: 'All providers failed.' };
     chrome.storage.local.set({ lastResult: { ...errPayload, prompt: state.prompt, timestamp: Date.now() } });
@@ -195,78 +202,69 @@ async function finishWith(reqId, _reason) {
     if (inflight.size === 0) stopKeepAlive();
     return;
   }
-  try {
-    synthesis = await runSynthesis(state, reqId);
-  } catch (e) {
-    // Synthesis failed → fall back to the first non-null raw answer.
-    synthesis = state.answers[state.synthesizer]
-              ?? state.answers.chatgpt
-              ?? state.answers.gemini
-              ?? state.answers.claude
-              ?? '(synthesis failed and no raw answer available)';
-  }
 
-  const payload = {
-    type: MessageType.FUSION_DONE,
-    synthesis,
-    raw: state.answers,
-    errors: state.errors || {},
-  };
-
-  // Persist the result so a popup that was auto-closed when the hidden
-  // window stole focus can still display it on next open.
-  chrome.storage.local.set({ lastResult: { ...payload, prompt: state.prompt, timestamp: Date.now() } });
-
-  try { state.port.postMessage(payload); } catch (_) {}
+  // Open the synthesis tab visibly in the user's main browsing window. We
+  // intentionally do NOT scrape the synthesis answer back into the popup —
+  // the user reads it natively in the provider's own UI (better markdown
+  // rendering, can follow up, etc.). We open before closing the minimized
+  // window so the user always has something visible to land on.
+  await openSynthesisTab(state);
+  await chrome.windows.remove(state.windowId).catch(() => {});
 
   inflight.delete(reqId);
-  await chrome.windows.remove(state.windowId).catch(() => {});
   if (inflight.size === 0) stopKeepAlive();
 }
 
-// Opens a 4th tab in the user-selected synthesizer provider, sends the meta-
-// prompt via a one-off promise that resolves on the next RESPONSE_READY for
-// this synthesis tab. This is a separate flow from runFusion's collector
-// because we need a dedicated reqId scope so onResponseReady doesn't confuse
-// the synthesis answer with a delayed retry from the original tabs.
-async function runSynthesis(state, originalReqId) {
-  const synthReqId = `${originalReqId}-synth`;
+// Opens the synthesis tab in the user's main browsing window (or a new
+// normal window if none exists), injects the meta-prompt on CONTENT_READY,
+// and returns. We do NOT wait for or capture the response — the user sees
+// the synthesis stream live in the tab.
+async function openSynthesisTab(state) {
+  const synthReqId = crypto.randomUUID() + '-synth';
   const provider = state.synthesizer;
   const url = ProviderUrl[provider] + `#reqId=${synthReqId}`;
-  const tab = await chrome.tabs.create({ windowId: state.windowId, url, active: false });
+
+  let tab;
+  if (state.userWindowId != null) {
+    tab = await chrome.tabs.create({ windowId: state.userWindowId, url, active: true });
+    // Bring the user's window forward in case it was behind another app.
+    chrome.windows.update(state.userWindowId, { focused: true }).catch(() => {});
+  } else {
+    // No existing normal window — create a new visible one for the synthesis.
+    const newWin = await chrome.windows.create({ url, focused: true }).catch(() => null);
+    tab = newWin && newWin.tabs && newWin.tabs[0];
+    if (!tab) return; // best-effort; nothing else to do
+  }
 
   const metaPrompt = buildSynthesisPrompt(state.prompt, state.answers);
 
-  return new Promise((resolve, reject) => {
-    let injected = false;
-
-    const timer = setTimeout(() => {
+  let injected = false;
+  function listener(msg) {
+    if (injected) return;
+    if (msg.type === MessageType.CONTENT_READY && msg.reqId === synthReqId && msg.provider === provider) {
+      injected = true;
       chrome.runtime.onMessage.removeListener(listener);
-      reject(new Error('Synthesis timeout'));
-    }, 90_000); // synthesis can be longer than a single answer
-
-    function listener(msg) {
-      if (msg.type === MessageType.CONTENT_READY && msg.reqId === synthReqId && msg.provider === provider) {
-        // Guard against duplicate CONTENT_READY (some provider routes reload
-        // their SPA shell once after the first DOM ready, which would otherwise
-        // re-fire INJECT_PROMPT mid-response).
-        if (injected) return;
-        injected = true;
-        chrome.tabs.sendMessage(tab.id, {
-          type: MessageType.INJECT_PROMPT,
-          provider,
-          prompt: metaPrompt,
-          reqId: synthReqId,
-        });
-      } else if (msg.type === MessageType.RESPONSE_READY && msg.reqId === synthReqId) {
-        clearTimeout(timer);
-        chrome.runtime.onMessage.removeListener(listener);
-        if (msg.error) reject(new Error(msg.error));
-        else resolve(msg.answer);
-      }
+      chrome.tabs.sendMessage(tab.id, {
+        type: MessageType.INJECT_PROMPT,
+        provider,
+        prompt: metaPrompt,
+        reqId: synthReqId,
+      });
     }
-    chrome.runtime.onMessage.addListener(listener);
-  });
+  }
+  chrome.runtime.onMessage.addListener(listener);
+  // Safety: drop the listener after 60s if the page never loads (logged-out
+  // redirect, network failure). The user will see whatever the page shows.
+  setTimeout(() => {
+    if (!injected) chrome.runtime.onMessage.removeListener(listener);
+  }, 60_000);
+
+  // Best-effort notice to the popup so it doesn't hang on "loading" state
+  // if it somehow stayed open. The popup is normally already closed by now
+  // (Chrome closes it on focus-shift) — this message is silently dropped.
+  try {
+    state.port.postMessage({ type: MessageType.FUSION_DONE, synthesisInTab: true });
+  } catch (_) {}
 }
 
 // chrome.alarms keep-alive: prevents the service worker from being evicted
