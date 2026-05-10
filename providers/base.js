@@ -136,8 +136,14 @@
           stopGoneAt = null;
         }
 
-        const stopBased = stopGoneAt !== null && Date.now() - stopGoneAt >= postStreamMs;
-        const textBased = lastText.length > 0 && Date.now() - textChangedAt >= stableTextMs;
+        // BOTH signals additionally require non-empty text — otherwise we'd
+        // resolve on a transitional empty assistant turn (e.g. between the
+        // "thinking" indicator and the streamed response), returning '' as
+        // the answer and getting silently dropped by buildSynthesisPrompt's
+        // truthiness check.
+        const hasText = lastText.length > 0;
+        const stopBased = hasText && stopGoneAt !== null && Date.now() - stopGoneAt >= postStreamMs;
+        const textBased = hasText && Date.now() - textChangedAt >= stableTextMs;
         if (stopBased || textBased) {
           clearInterval(tick);
           resolve(lastTurn);
@@ -152,11 +158,15 @@
     return t.includes('Just a moment') || !!document.getElementById('challenge-running');
   }
 
-  // Extract markdown-ish text from an assistant turn. We prefer innerText (preserves
-  // line breaks and code blocks reasonably) over textContent (collapses whitespace).
+  // Extract markdown-ish text from an assistant turn. innerText preserves line
+  // breaks and code blocks reasonably, but returns '' when the element is
+  // hidden mid-transition — fall back to textContent (collapses whitespace
+  // but always returns text) in that case so we don't silently drop a real
+  // answer for being briefly invisible at read time.
   function extractAnswerText(turnElement) {
     if (!turnElement) return '';
-    return turnElement.innerText.trim();
+    const txt = turnElement.innerText || turnElement.textContent || '';
+    return txt.trim();
   }
 
   self.PromptFusionBase = {
